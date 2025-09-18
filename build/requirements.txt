@@ -1,0 +1,6 @@
+opencv-python
+numpy
+pyyaml
+# 可选：若需要直接加载 YOLOv8 权重
+ultralytics
+torch

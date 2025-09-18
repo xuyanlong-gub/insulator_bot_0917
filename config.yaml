@@ -1,0 +1,60 @@
+vision:
+  weight_path: "D:\\workspace\\CPT_agent\\insulator_bot\\models\\best1.pt"
+  conf_thr:
+    top: 0.8
+    body: 0.8
+    flange: 0.8
+    base: 0.40
+  center_band_px: 20
+  vote_k: 5
+  vote_t: 3
+  size_filter:
+    enable: true
+    target_classes: [1]
+    min_ratio: 0.25
+    center_focus: true
+    center_band_ratio: 0.4
+
+sampling:
+  period_s: 0.5
+  stop_on_tip: true
+  z_max: 250000.0
+
+postproc:
+  open_close_win: 15
+  min_segment_mm: 0
+  safety_delta_mm: 0
+  brush_offset_mm: 0
+  merge_gap_mm: 10
+  output_mode: "segments"
+
+modbus:
+  host: "127.0.0.1"
+  port: 15020
+  unit_id: 1
+  reg_base: 0
+
+runtime:
+  poll_s: 0.05              # 轮询周期
+  timeout_sampling_s: 8.0   # 采样阶段超时
+  timeout_stop_s: 3.0       # 停止上升等待STATUS=3
+  timeout_seg_s: 5.0        # 单段执行超时基线
+  max_retries: 1
+  heart_period_ms: 700      # 0.5~1s 之间
+logging:
+  save_video: false
+  csv_path: "logs/sample.csv"
+
+
+distance:
+  max_jump_mm: 150
+  bfill_enabled: true
+  ffill_tail: true
+  interp_gap_max: 0
+
+
+cleaning:
+  brush_width_mm: 200
+  overlap_pct: 0.20     # 0.10~0.25
+  min_step_mm: 150
+  max_step_mm: 180
