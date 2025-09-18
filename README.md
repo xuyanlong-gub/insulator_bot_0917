@@ -1,61 +1,115 @@
-# 绝缘子清洗机器人（三阶段协议重构版）
+﻿# 绝缘子清洗机器人（三阶段协议重构版）
 
-本项目根据《GPT5 Agent 重构指南》重构，包含：视觉检测、中心带判定、采样后处理、三阶段 Modbus 通讯状态机、模拟 PLC、可视化与配置。
+本项目重构了绝缘子清洗机器人的三阶段控制流程，覆盖视觉检测、中心带判定、采样后处理、Modbus 通讯状态机、PLC 模拟器与可视化等组件，便于在实验室环境快速验证端到端流程。
 
-## 一、环境
-```bash
-pip install -r requirements.txt
-```
+## 功能总览
+- 视觉检测：基于 YOLOv8/ONNX，可按需切换至 Dummy 检测器。
+- 中心带判定：结合滑动投票，稳定判断当前刷头区域是否可清洗。
+- 上升采样：按照固定周期向 PLC 请求高度采样并记录 flag/Z/距离数据。
+- 后处理：对采样序列做形态学滤波、边界缩退、刷头偏置与距离统计，生成执行段表。
+- 下降执行：三阶段 Modbus 状态机逐段下发清洗指令。
+- PLC 模拟器：内置最小 Modbus 服务器，便于离线联调。
+- 可视化：支持实时叠加检测框与中心带、离线回放日志。
 
-## 二、启动模拟 PLC（建议先在本机联调）
-```bash
-python -m insulator_bot.comms.plc_sim  # 监听 0.0.0.0:15020
-```
-
-## 三、运行主流程（视频源或相机）
-```bash
-# 使用默认配置与示例参数（请先修改 config.yaml 中模型路径）
-python -m insulator_bot.main --config config.yaml --video path/to/demo.mp4
-```
-
-## 四、仅离线后处理与可视化
-```bash
-python -m insulator_bot.viz.visualize --csv logs/sample.csv --video path/to/demo.mp4
-```
-
-## 五、目录
+## 目录结构
 ```text
 insulator_bot/
-├─ core/                 # 配置、日志、工具
-├─ vision/               # 检测、中心带判定、投票
-├─ pipeline/             # 采样、后处理、段映射、状态机
-├─ comms/                # Modbus 客户端与模拟 PLC
-├─ viz/                  # 可视化
-├─ main.py               # 程序入口
-├─ config.yaml           # 配置
-└─ requirements.txt
+├─ core/               # 配置读取、日志、工具函数
+├─ comms/              # Modbus 客户端、协议常量及 PLC 模拟器
+├─ pipeline/           # 采样、后处理、段命令与状态机
+├─ vision/             # 目标检测、中心带判定、滑动投票
+├─ sensors/            # 距离传感器抽象与模拟实现
+├─ viz/                # 可视化叠加与视频回放脚本
+├─ runtime/            # 多线程运行模板与辅助线程
+├─ build/              # 打包或部署所需的离线脚本与依赖
+├─ videos/             # 示例视频（通过 Git LFS 管理）
+├─ logs/               # 采样与段后处理输出
+├─ main.py             # 主流程入口
+├─ config.yaml         # 运行配置
+├─ requirements.txt    # Python 依赖
+└─ README.md
 ```
 
-## 六、三阶段交互协议要点
-- 浮点寄存器（float32，大端，1 float=2 regs）；固定偏移：VERSION、CMD、ARG0..ARG4、STATUS、Z、DIS、HEARTBEAT；
-- CMD：0 idle，1 tick，2 stop_ascend，3 start_seg，4 abort；
-- STATUS 位：1 READY，2 BUSY，4 Z_VALID，8 AT_MAX，16 ACK，32 SEG_DONE，64 ERROR；
-- 上升：周期写 TICK→读 STATUS|Z 并记录 [flag,Z]；
-- 终止：写 STOP_ASC（ARG0=1 顶端/2 顶部位）→等待 ACK；
-- 下降：逐段写 START_SEG（ARG0=Z_start, ARG1=offset_step, ARG2=n_steps, ARG3=dis, ARG4=is_last）→等待 ACK→等待 SEG_DONE。
+## 环境准备
+1. **Python** ：建议 3.9 及以上版本。
+2. **依赖安装** ：
+   ```bash
+   pip install -r requirements.txt
+   ```
+   - 若需直接运行 YOLOv8 推理，请确保 `torch` 与 `ultralytics` 可用。
+   - 仅离线回放/后处理可使用 Dummy 模式，无需额外深度学习依赖。
+3. **Git LFS** ：仓库中的 `videos/*.mp4` 通过 Git LFS 管理，克隆后请执行：
+   ```bash
+   git lfs install
+   git lfs pull
+   ```
 
-## 七、连接真实 PLC 的注意事项
-- Windows 防火墙放行 TCP/502 或实际端口；
-- 确认上位机与 PLC 在同一网段，禁用虚拟网卡对优先级的影响；
-- 读写保持寄存器时注意字节序：本项目使用 float32 大端，字序高字在前；
-- 超时与重试策略：ACK/SEG_DONE 等待超时自动重发，掉线可重连；
-- 对端需按本文协议置位/清位 STATUS 位，保证幂等。
+## 快速上手
+1. **模拟 PLC**（建议先在本机联调）：
+   ```bash
+   python -m insulator_bot.comms.plc_sim  # 默认监听 0.0.0.0:15020
+   ```
+2. **运行主流程**（视频源或相机）：
+   ```bash
+   # 使用默认配置与示例参数，运行前请修改 config.yaml 中的模型路径
+   python -m insulator_bot.main --config config.yaml --video path/to/demo.mp4
+   ```
+3. **离线可视化回放**：
+   ```bash
+   python -m insulator_bot.viz.visualize --config config.yaml --video path/to/demo.mp4 --save outputs/preview.mp4
+   ```
+4. **仅做后处理（不走通讯）**：
+   ```bash
+   python - <<'PY'
+   from pipeline.postprocess import postprocess_sequences_ex
+   # 读取 logs/sample.csv, 自行调用后处理函数
+   PY
+   ```
 
-## 八、验证路线
-1. 启动 `plc_sim`，观察控制台打印；
-2. 运行 `python -m insulator_bot.main --config config.yaml --video path/to/demo.mp4`；
-3. 结束后检查 `logs/sample.csv` 与日志，确认段下发；
-4. 可在 `postproc` 中调整形态学窗口、最小段、边界缩退与合并参数。
+## 三阶段流程说明
+1. **Phase 1 — 上升采样**
+   - `pipeline.sampler.run_sampling` 定期触发 `CMD_SAMPLE_UP`，读取 PLC 回传高度与状态。
+   - 视觉检测 + 中心带判定生成可清洗 flag，配合距离数据缓冲。
+   - 采样结果保存至 `logs/sample.csv`。
+2. **Phase 2 — 停止协商**
+   - `pipeline.state_machine.negotiate_stop` 写入 `CMD_STOP_ASC`，等待 PLC 进入停止状态。
+3. **Phase 3 — 段执行**
+   - 后处理生成段表后，`pipeline.state_machine.descend_execute` 依次写入 `CMD_START_SEG` 与参数（起点、步距、次数、距离、是否最后一段）。
+   - 状态机等待 `ST_CLEANING` → `ST_WAIT_SEG`，最后通过 `CMD_FINISH_ALL` 收尾。
 
-## 九、License
-本仓库仅用于内部联调与演示。
+## 配置文件说明（`config.yaml`）
+- `vision`：模型路径、置信度阈值、中心带宽度、投票窗口等参数。
+- `sampling`：采样周期、触顶策略、Z 上限。
+- `postproc`：形态学窗口、最小段长、安全缩退、刷头偏置、合并间隙等。
+- `modbus`：PLC 地址、端口、站号及寄存器偏移。
+- `distance`：距离数据的回填、插值与限幅策略。
+- `cleaning`：刷头宽度、步距限制与重叠率。
+- `logging` / `runtime`：日志路径、心跳周期、超时与重试次数等运行时参数。
+
+## 通讯协议要点
+- 浮点寄存器采用 **float32 大端**（1 float = 2 个寄存器），常用偏移：
+  - `OFF_CMD`、`OFF_STATUS`、`OFF_Z`、`OFF_ZSIG`、`OFF_H0`、`OFF_DH`、`OFF_N`、`OFF_DIS`、`OFF_HEART` 等。
+- 主要命令：`CMD_BOOT_OK`、`CMD_READY_REQ`、`CMD_SAMPLE_UP`、`CMD_STOP_ASC`、`CMD_START_SEG`、`CMD_FINISH_ALL`。
+- 状态位：`ST_INIT`、`ST_READY`、`ST_SAMPLING`、`ST_STOPPED`、`ST_AT_TOP`、`ST_WAIT_SEG`、`ST_CLEANING`、`ST_DONE`。
+- 推荐策略：
+  - 采样阶段轮询 `read_status_and_z`，记录 flag/Z。
+  - 等待 ACK/SEG_DONE 时设定超时与重试，掉线时支持重连。
+  - 真实 PLC 联调需开放端口、防火墙并确保网络通畅。
+
+## 产出数据
+- `logs/sample.csv`：采样得到的 `flag, z, dis` 序列。
+- `logs/segments.csv`：后处理生成的可清洗段（起始/终止高度 + 距离统计）。
+- 控制台日志与可选的文件日志（在 `logging.file` 配置）。
+
+## 可视化与调试
+- `viz/overlay.py` 提供检测与中心带叠加函数，可在自定义界面复用。
+- `viz/visualize.py` 支持实时播放与录制。
+- `runtime/threading_runtime.py` 提供多线程模板，包括抓帧、检测、距离读取、心跳与 CSV 写入线程，适合扩展到真实设备。
+
+## 常见问题
+- **YOLO 模型无法加载**：检查 `ultralytics`/`torch` 是否安装，或改用 ONNX / Dummy 模式。
+- **视频文件过大导致 push 失败**：仓库已启用 Git LFS，请确保本地也通过 `git lfs track "*.mp4"` 管理。
+- **PLC 联调失败**：确认网络配置、端口、防火墙及寄存器字节序与本项目一致。
+
+## License
+本仓库仅供团队内部联调与演示使用，禁止未经授权的对外发布。
